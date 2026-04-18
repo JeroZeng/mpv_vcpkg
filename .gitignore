@@ -1,0 +1,7 @@
+vendor
+.cache
+release
+*.tar.gz
+*.tar.gz.sha256
+vcpkg
+vcpkg_installed

@@ -1,0 +1,149 @@
+name: Build libmpv
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: libmpv-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-build:
+    name: Build libmpv (${{ matrix.runner_os }} / ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner_os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+      MPV_TARGET_ARCH: ${{ matrix.arch }}
+      VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_triplet }}
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+      VCPKG_FORCE_SYSTEM_BINARIES: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner_os: macos-15
+            arch: arm64
+            deployment_target: "14.0"
+            vcpkg_triplet: arm64-osx-mp
+          - runner_os: macos-15
+            arch: x86_64
+            deployment_target: "13.0"
+            vcpkg_triplet: x64-osx-mp
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Show build environment
+        run: |
+          xcodebuild -version
+          uname -m
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+          echo "MPV_TARGET_ARCH=$MPV_TARGET_ARCH"
+          echo "VCPKG_TARGET_TRIPLET=$VCPKG_TARGET_TRIPLET"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install meson ninja
+          FORMULAE=(pkgconf autoconf autoconf-archive automake libtool)
+          MISSING=()
+          for f in "${FORMULAE[@]}"; do
+            if ! brew list --formula "$f" >/dev/null 2>&1; then
+              MISSING+=("$f")
+            fi
+          done
+          if [ "${#MISSING[@]}" -gt 0 ]; then
+            brew update
+            brew install -q "${MISSING[@]}"
+          fi
+
+      - name: Restore vcpkg cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg_installed
+            ~/Library/Caches/vcpkg/archives
+          key: ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-${{ hashFiles('install-vcpkg-deps.sh', 'vcpkg-triplets/*.cmake', 'vcpkg-ports/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-
+
+      - name: Bootstrap vcpkg
+        run: |
+          set -euo pipefail
+          if [ ! -d "$VCPKG_ROOT/.git" ]; then
+            rm -rf "$VCPKG_ROOT"
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          fi
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Install vcpkg dependencies
+        run: bash ./install-vcpkg-deps.sh
+
+      - name: Download mpv source code
+        run: bash ./download.sh
+
+      - name: Build mpv library
+        run: bash ./build-macos.sh
+
+      - name: Prepare artifacts
+        env:
+          MPV_TARGET_ARCH: ${{ matrix.arch }}
+          VCPKG_TARGET_TRIPLET: ${{ matrix.vcpkg_triplet }}
+          VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg_installed
+        run: |
+          set -euo pipefail
+          REF_SAFE="${GITHUB_REF_NAME//\//-}"
+          MPV_TAG="$REF_SAFE"
+          RELEASE_REV="dev"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-r([0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r${BASH_REMATCH[2]}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r0"
+          fi
+          PKG_NAME="libmpv-${MPV_TAG}-${RELEASE_REV}-macos-${{ matrix.arch }}"
+          bash ./package-macos-runtime.sh \
+            --build-dir "$GITHUB_WORKSPACE/vendor/mpv/buildout" \
+            --out-dir "$GITHUB_WORKSPACE/release" \
+            --pkg-name "$PKG_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-macos-${{ github.run_id }}-${{ matrix.arch }}
+          path: |
+            libmpv-*.tar.gz
+            libmpv-*.tar.gz.sha256
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: macos-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/**/*.tar.gz
+            release-assets/**/*.tar.gz.sha256
+          generate_release_notes: true
