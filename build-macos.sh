@@ -50,7 +50,7 @@ if [ ! -d "$VCPKG_PREFIX" ]; then
     exit 1
 fi
 
-export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 MIN_OS_FLAG="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
 ARCH_FLAG="-arch ${MPV_TARGET_ARCH}"
 SWIFT_TARGET_TRIPLE="${MPV_TARGET_ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}"
@@ -125,10 +125,18 @@ fi
 
 if [ ! -d "$BUILD_DIR" ]; then
     echo "Configuring Meson..."
-    meson setup buildout "${MESON_ARGS[@]}" "${MESON_CROSS_ARGS[@]}"
+    if [ "${#MESON_CROSS_ARGS[@]}" -gt 0 ]; then
+        meson setup buildout "${MESON_ARGS[@]}" "${MESON_CROSS_ARGS[@]}"
+    else
+        meson setup buildout "${MESON_ARGS[@]}"
+    fi
 else
     echo "Reconfiguring Meson (wipe old options)..."
-    meson setup buildout --wipe "${MESON_ARGS[@]}" "${MESON_CROSS_ARGS[@]}"
+    if [ "${#MESON_CROSS_ARGS[@]}" -gt 0 ]; then
+        meson setup buildout --wipe "${MESON_ARGS[@]}" "${MESON_CROSS_ARGS[@]}"
+    else
+        meson setup buildout --wipe "${MESON_ARGS[@]}"
+    fi
 fi
 
 echo "Building..."

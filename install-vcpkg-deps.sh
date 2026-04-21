@@ -34,13 +34,50 @@ if [ "$(uname -s)" = "Darwin" ]; then
     missing_tools=()
     command -v autoconf >/dev/null 2>&1 || missing_tools+=("autoconf")
     command -v automake >/dev/null 2>&1 || missing_tools+=("automake")
-    if ! command -v libtoolize >/dev/null 2>&1 && ! command -v glibtoolize >/dev/null 2>&1; then
+    command -v aclocal >/dev/null 2>&1 || missing_tools+=("automake")
+    if command -v libtoolize >/dev/null 2>&1; then
+        export LIBTOOLIZE="$(command -v libtoolize)"
+    elif command -v glibtoolize >/dev/null 2>&1; then
+        export LIBTOOLIZE="$(command -v glibtoolize)"
+        TOOL_SHIM_DIR="${PROJECT_ROOT}/.cache/tool-shims"
+        mkdir -p "$TOOL_SHIM_DIR"
+        ln -sf "$LIBTOOLIZE" "$TOOL_SHIM_DIR/libtoolize"
+        export PATH="$TOOL_SHIM_DIR:$PATH"
+        export LIBTOOLIZE="$TOOL_SHIM_DIR/libtoolize"
+    else
         missing_tools+=("libtool")
     fi
 
     if [ "${#missing_tools[@]}" -gt 0 ]; then
         echo "Missing required system build tools: ${missing_tools[*]}" >&2
         echo "Install them first: brew install autoconf autoconf-archive automake libtool" >&2
+        exit 1
+    fi
+
+    echo "Using LIBTOOLIZE=$LIBTOOLIZE"
+
+    # Match vcpkg's aclocal/autoconf-archive preflight behavior early so
+    # we fail fast with a clear hint instead of failing during a port build.
+    ACLOCAL_CHECK_DIR="${PROJECT_ROOT}/.cache/aclocal-check"
+    rm -rf "$ACLOCAL_CHECK_DIR"
+    mkdir -p "$ACLOCAL_CHECK_DIR"
+    cat > "$ACLOCAL_CHECK_DIR/configure.ac" <<'EOF'
+AC_INIT([check-autoconf], [1.0])
+AM_INIT_AUTOMAKE
+LT_INIT
+AX_PTHREAD
+EOF
+
+    ACLOCAL_ERR_LOG="$ACLOCAL_CHECK_DIR/aclocal.err.log"
+    if ! (cd "$ACLOCAL_CHECK_DIR" && aclocal --dry-run > /dev/null 2>"$ACLOCAL_ERR_LOG"); then
+        cat "$ACLOCAL_ERR_LOG" >&2 || true
+        echo "aclocal preflight failed. Install required tools: brew install autoconf autoconf-archive automake libtool" >&2
+        exit 1
+    fi
+    if grep -Eiq "autoconf-archive.*missing" "$ACLOCAL_ERR_LOG"; then
+        cat "$ACLOCAL_ERR_LOG" >&2 || true
+        echo "autoconf-archive is required by vcpkg ports (for AX_* macros)." >&2
+        echo "Install it with: brew install autoconf-archive" >&2
         exit 1
     fi
 fi
@@ -51,7 +88,6 @@ PORTS=(
     lcms
     libass
     ffmpeg
-    libplacebo
     luajit
     mujs
     uchardet
@@ -59,8 +95,10 @@ PORTS=(
     libarchive
     libbluray
     libdvdnav
+    libsmb2
     rubberband
     libjpeg-turbo
+    libplacebo
 )
 
 UNAVAILABLE_OPTIONAL_PORTS=(

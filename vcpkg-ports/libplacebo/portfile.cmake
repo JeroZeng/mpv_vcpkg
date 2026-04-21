@@ -1,7 +1,7 @@
 vcpkg_check_linkage(ONLY_DYNAMIC_LIBRARY)
 
 set(LIBPLACEBO_REPO "https://github.com/haasn/libplacebo.git")
-set(LIBPLACEBO_TAG "v7.360.0")
+set(LIBPLACEBO_TAG "v7.349.0")
 
 if(DEFINED ENV{LIBPLACEBO_REPO} AND NOT "$ENV{LIBPLACEBO_REPO}" STREQUAL "")
     set(LIBPLACEBO_REPO "$ENV{LIBPLACEBO_REPO}")
@@ -66,6 +66,7 @@ vcpkg_configure_meson(
         -Dopengl=disabled
         -Dvulkan=enabled
         -Dvk-proc-addr=enabled
+        -Dshaderc=disabled
         -Ddemos=false
         -Dtests=false
         -Dbench=false

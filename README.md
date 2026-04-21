@@ -37,7 +37,7 @@ git clone --depth 1 https://github.com/microsoft/vcpkg.git ./vcpkg
 
 Custom overlay triplets are in `vcpkg-triplets/`:
 - `arm64-osx-mp` (deployment target `14.0`)
-- `x64-osx-mp` (deployment target `13.0`)
+- `x64-osx-mp` (deployment target `14.0`)
 
 Important:
 - Keep `MACOSX_DEPLOYMENT_TARGET` in `build-macos.sh` aligned with the triplet deployment target for the same arch.
@@ -64,6 +64,8 @@ The script uses:
 - overlay ports: `vcpkg-ports/`
 - overlay triplets: `vcpkg-triplets/`
 - install root: `./vcpkg_installed`
+
+Default dependency set now includes `libsmb2` (SMB2/SMB3 client support).
 
 ## Build mpv/libmpv
 
@@ -92,7 +94,7 @@ Cross-build `x86_64` on Apple Silicon:
 VCPKG_TARGET_TRIPLET=x64-osx-mp bash ./install-vcpkg-deps.sh
 MPV_TARGET_ARCH=x86_64 \
 VCPKG_TARGET_TRIPLET=x64-osx-mp \
-MACOSX_DEPLOYMENT_TARGET=13.0 \
+MACOSX_DEPLOYMENT_TARGET=14.0 \
 bash ./build-macos.sh
 ```
 
