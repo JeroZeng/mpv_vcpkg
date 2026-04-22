@@ -143,6 +143,12 @@ Build with defaults for the host arch:
 bash ./build-macos.sh
 ```
 
+`build-macos.sh` now builds MoltenVK before Meson configure/compile and copies artifacts to:
+- `vendor/MoltenVK/Build/Release/libMoltenVK.dylib`
+- `vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json`
+
+Set `AUTO_BUILD_MOLTENVK=0` to skip this step.
+
 Build a specific mpv version:
 
 ```bash
@@ -178,6 +184,14 @@ Create runtime package:
 bash ./package-macos-runtime.sh --pkg-name libmpv-local-macos
 ```
 
+`package-macos-runtime.sh` uses `MPV_TARGET_ARCH` (`arm64` or `x86_64`) to select target-arch artifacts.
+If omitted, it falls back to `uname -m`.
+
+```bash
+MPV_TARGET_ARCH=arm64  bash ./package-macos-runtime.sh --pkg-name libmpv-local-macos-arm64
+MPV_TARGET_ARCH=x86_64 bash ./package-macos-runtime.sh --pkg-name libmpv-local-macos-x64
+```
+
 Custom output dir/build dir:
 
 ```bash
@@ -199,6 +213,10 @@ Outputs:
 - `VCPKG_ROOT`: vcpkg checkout path (default `./vcpkg`)
 - `VCPKG_INSTALLED_DIR`: install root (default `./vcpkg_installed`)
 - `STATIC_PORTS`: ports to install with static linkage, e.g. `luajit,mujs`
+- `MOLTENVK_REF`: MoltenVK git ref for `build-macos.sh` (default `v1.4.0`)
+- `MOLTENVK_REPO_DIR`: MoltenVK source dir (default `./vendor/MoltenVK`)
+- `MOLTENVK_OUTPUT_DIR`: MoltenVK output dir (default `./vendor/MoltenVK/Build/Release`)
+- `MOLTENVK_ICD_PATH`: MoltenVK ICD json path (default `./vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json`)
 - `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers
 
 ## CI Notes

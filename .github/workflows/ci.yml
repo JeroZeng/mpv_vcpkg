@@ -16,8 +16,8 @@ concurrency:
 
 jobs:
   macos-build:
-    name: Build libmpv (${{ matrix.runner_os }} / ${{ matrix.arch }})
-    runs-on: ${{ matrix.runner_os }}
+    name: Build libmpv (macos-15 / ${{ matrix.arch }})
+    runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
       MPV_TARGET_ARCH: ${{ matrix.arch }}
@@ -29,12 +29,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner_os: macos-15
-            arch: arm64
+          - arch: arm64
             deployment_target: "14.0"
             vcpkg_triplet: arm64-osx-mp
-          - runner_os: macos-15
-            arch: x86_64
+          - arch: x86_64
             deployment_target: "14.0"
             vcpkg_triplet: x64-osx-mp
     steps:

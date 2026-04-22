@@ -332,16 +332,11 @@ copy_moltenvk_runtime() {
   local -a lib_candidates icd_candidates
 
   moltenvk_lib_src=""
-  for owner in "$LIB_DIR"/libmpv*.dylib "$LIB_DIR"/libsoia_utils*.dylib; do
-    [ -e "$owner" ] || continue
-    if moltenvk_lib_src="$(resolve_dep "$owner" "libMoltenVK.dylib" 2>/dev/null || true)"; then
-      [ -n "$moltenvk_lib_src" ] && break
-    fi
-  done
 
   lib_candidates=(
-    "$BUILD_DIR/libMoltenVK.dylib"
-    "$BUILD_DIR/lib/libMoltenVK.dylib"
+    "${MOLTENVK_LIB_PATH:-}"
+    "$PROJECT_ROOT/vendor/MoltenVK/Build/Release/libMoltenVK.dylib"
+    "$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
     "${BREW_PREFIX}/opt/molten-vk/lib/libMoltenVK.dylib"
     "/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib"
     "/usr/local/opt/molten-vk/lib/libMoltenVK.dylib"
@@ -355,6 +350,16 @@ copy_moltenvk_runtime() {
         fi
         moltenvk_lib_src="$candidate"
         break
+      fi
+    done
+  fi
+
+  # Fallback: resolve from already-copied binaries when local build output is absent.
+  if [ -z "$moltenvk_lib_src" ]; then
+    for owner in "$LIB_DIR"/libmpv*.dylib "$LIB_DIR"/libsoia_utils*.dylib; do
+      [ -e "$owner" ] || continue
+      if moltenvk_lib_src="$(resolve_dep "$owner" "libMoltenVK.dylib" 2>/dev/null || true)"; then
+        [ -n "$moltenvk_lib_src" ] && break
       fi
     done
   fi
@@ -376,7 +381,11 @@ copy_moltenvk_runtime() {
   fi
 
   moltenvk_icd_src=""
-  if [ -n "$moltenvk_lib_src" ]; then
+  if [ -n "${MOLTENVK_ICD_PATH:-}" ] && [ -f "${MOLTENVK_ICD_PATH}" ]; then
+    moltenvk_icd_src="${MOLTENVK_ICD_PATH}"
+  fi
+
+  if [ -z "$moltenvk_icd_src" ] && [ -n "$moltenvk_lib_src" ]; then
     lib_parent="$(cd "$(dirname "$moltenvk_lib_src")/.." && pwd)"
     icd_candidates=(
       "$lib_parent/etc/vulkan/icd.d/MoltenVK_icd.json"
@@ -392,8 +401,8 @@ copy_moltenvk_runtime() {
 
   if [ -z "$moltenvk_icd_src" ]; then
     icd_candidates=(
-      "$BUILD_DIR/MoltenVK_icd.json"
-      "$BUILD_DIR/etc/vulkan/icd.d/MoltenVK_icd.json"
+      "$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json"
+      "$PROJECT_ROOT/vendor/MoltenVK/Build/Release/MoltenVK_icd.json"
       "${BREW_PREFIX}/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json"
       "${BREW_PREFIX}/opt/molten-vk/share/vulkan/icd.d/MoltenVK_icd.json"
       "/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json"

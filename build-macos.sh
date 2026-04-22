@@ -6,6 +6,13 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENDOR_DIR="$PROJECT_ROOT/vendor"
 MPV_DIR="$VENDOR_DIR/mpv"
 BUILD_DIR="$MPV_DIR/buildout"
+AUTO_BUILD_MOLTENVK="${AUTO_BUILD_MOLTENVK:-1}"
+MOLTENVK_REPO_DIR="${MOLTENVK_REPO_DIR:-$PROJECT_ROOT/vendor/MoltenVK}"
+MOLTENVK_REPO_URL="${MOLTENVK_REPO_URL:-https://github.com/KhronosGroup/MoltenVK.git}"
+MOLTENVK_REF="${MOLTENVK_REF:-v1.4.0}"
+MOLTENVK_CONFIGURATION="${MOLTENVK_CONFIGURATION:-Release}"
+MOLTENVK_OUTPUT_DIR="${MOLTENVK_OUTPUT_DIR:-$PROJECT_ROOT/vendor/MoltenVK/Build/Release}"
+MOLTENVK_ICD_PATH="${MOLTENVK_ICD_PATH:-$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json}"
 
 if [ ! -d "$MPV_DIR" ]; then
     echo "Missing mpv source: $MPV_DIR"
@@ -184,6 +191,69 @@ normalize_libplacebo_install_name() {
     install_name_tool -id "$placebo_soname" "$placebo_real_lib"
 }
 
+ensure_moltenvk_runtime() {
+    local pkg_project
+
+    if [ "$AUTO_BUILD_MOLTENVK" = "0" ]; then
+        echo "Skipping MoltenVK auto-build (AUTO_BUILD_MOLTENVK=0)"
+        return
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        echo "Missing required tool for MoltenVK build: git" >&2
+        exit 1
+    fi
+    if ! command -v xcodebuild >/dev/null 2>&1; then
+        echo "Missing required tool for MoltenVK build: xcodebuild" >&2
+        exit 1
+    fi
+
+    if [ ! -f "$MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" ] || [ ! -f "$MOLTENVK_ICD_PATH" ]; then
+        echo "MoltenVK runtime artifacts missing; building them now..."
+    else
+        echo "Refreshing MoltenVK runtime artifacts..."
+    fi
+
+    mkdir -p "$(dirname "$MOLTENVK_REPO_DIR")"
+    if [ ! -d "$MOLTENVK_REPO_DIR/.git" ]; then
+        echo "Cloning MoltenVK into $MOLTENVK_REPO_DIR"
+        git clone --recursive "$MOLTENVK_REPO_URL" "$MOLTENVK_REPO_DIR"
+    fi
+
+    echo "Updating MoltenVK repository"
+    git -C "$MOLTENVK_REPO_DIR" fetch --tags --prune
+    git -C "$MOLTENVK_REPO_DIR" checkout "$MOLTENVK_REF"
+    git -C "$MOLTENVK_REPO_DIR" submodule update --init --recursive
+
+    if [ -x "$MOLTENVK_REPO_DIR/fetchDependencies" ]; then
+        echo "Running MoltenVK dependency fetch script"
+        (cd "$MOLTENVK_REPO_DIR" && ./fetchDependencies --macos)
+    fi
+
+    pkg_project="$MOLTENVK_REPO_DIR/MoltenVKPackaging.xcodeproj"
+    if [ ! -d "$pkg_project" ]; then
+        echo "MoltenVK packaging project not found: $pkg_project" >&2
+        exit 1
+    fi
+
+    echo "Building MoltenVK (configuration=$MOLTENVK_CONFIGURATION, arch=$MPV_TARGET_ARCH)"
+    xcodebuild \
+        -project "$pkg_project" \
+        -scheme "MoltenVK Package (macOS only)" \
+        -configuration "$MOLTENVK_CONFIGURATION" \
+        -arch "$MPV_TARGET_ARCH" \
+        build
+
+    if [ ! -f "$MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" ]; then
+        echo "Failed to find MoltenVK output: $MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" >&2
+        exit 1
+    fi
+    if [ ! -f "$MOLTENVK_ICD_PATH" ]; then
+        echo "Failed to find MoltenVK output: $MOLTENVK_ICD_PATH" >&2
+        exit 1
+    fi
+}
+
 cd "$MPV_DIR"
 echo "Building for arch=$MPV_TARGET_ARCH on host=$HOST_ARCH"
 echo "Using vcpkg triplet=$VCPKG_TARGET_TRIPLET"
@@ -193,6 +263,7 @@ echo "Using vcpkg root=$VCPKG_ROOT"
 echo "Using PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
 echo "Building with MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 echo "Building with Swift target=$SWIFT_TARGET_TRIPLE"
+ensure_moltenvk_runtime
 normalize_vulkan_install_name
 # normalize_libplacebo_install_name
 
