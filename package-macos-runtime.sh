@@ -4,8 +4,12 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/vendor/mpv/buildout"
+SOIA_UTILS_DIR="${PROJECT_ROOT}/vendor/soia_utils"
+CONFIG_DATA_SRC="${PROJECT_ROOT}/vendor/config.data"
 OUT_DIR="${PROJECT_ROOT}/release"
 PKG_NAME=""
+DEFAULT_PKG_NAME="libmpv-local-macos"
+ORIGINAL_ARGC="$#"
 
 usage() {
   cat <<'EOF'
@@ -17,6 +21,8 @@ Build a self-contained macOS runtime package:
   - all non-system dylib dependencies (recursive)
   - install names rewritten to @rpath/<lib>
   - @loader_path rpath added
+Defaults:
+  (no args) --pkg-name libmpv-local-macos
 EOF
 }
 
@@ -47,9 +53,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$PKG_NAME" ]; then
-  echo "--pkg-name is required" >&2
-  usage
-  exit 1
+  if [ "$ORIGINAL_ARGC" -eq 0 ]; then
+    PKG_NAME="$DEFAULT_PKG_NAME"
+  else
+    echo "--pkg-name is required" >&2
+    usage
+    exit 1
+  fi
 fi
 
 if [ ! -d "$BUILD_DIR" ]; then
@@ -82,6 +92,14 @@ VCPKG_LIB_DIR=""
 if [ -n "$VCPKG_TARGET_TRIPLET" ] && [ -d "$VCPKG_INSTALLED_DIR/$VCPKG_TARGET_TRIPLET/lib" ]; then
   VCPKG_LIB_DIR="$VCPKG_INSTALLED_DIR/$VCPKG_TARGET_TRIPLET/lib"
 fi
+TARGET_ARCH="${MPV_TARGET_ARCH:-$(uname -m)}"
+case "$TARGET_ARCH" in
+  arm64|x86_64) ;;
+  *)
+    echo "Unsupported target architecture: $TARGET_ARCH" >&2
+    exit 1
+    ;;
+esac
 
 TMP_DIR="$(mktemp -d)"
 VISITED_FILE="${TMP_DIR}/visited.txt"
@@ -94,6 +112,13 @@ already_visited() {
 
 mark_visited() {
   printf '%s\n' "$1" >> "$VISITED_FILE"
+}
+
+is_target_arch_dylib() {
+  local file="$1"
+  local archs
+  archs="$(lipo -archs "$file" 2>/dev/null || true)"
+  [ -n "$archs" ] && printf '%s\n' "$archs" | tr ' ' '\n' | grep -Fxq "$TARGET_ARCH"
 }
 
 is_system_dep() {
@@ -172,6 +197,18 @@ scan_and_copy_deps() {
     fi
 
     dep_name="$(basename "$resolved")"
+    if [[ "$dep_name" =~ ^libvulkan\.1\.[0-9].*\.dylib$ ]]; then
+      dep_name="libvulkan.1.dylib"
+      if [ -e "$VCPKG_LIB_DIR/$dep_name" ]; then
+        resolved="$VCPKG_LIB_DIR/$dep_name"
+      fi
+    fi
+    if [[ "$dep_name" =~ ^libplacebo\.[0-9].*\.dylib$ ]]; then
+      dep_name="libplacebo.dylib"
+      if [ -e "$VCPKG_LIB_DIR/$dep_name" ]; then
+        resolved="$VCPKG_LIB_DIR/$dep_name"
+      fi
+    fi
     target="${LIB_DIR}/${dep_name}"
     if [ ! -e "$target" ]; then
       cp -vL "$resolved" "$target"
@@ -185,7 +222,8 @@ scan_and_copy_deps() {
 rewrite_install_names() {
   local file dep dep_name
 
-  for file in "$LIB_DIR"/*; do
+  shopt -s nullglob
+  for file in "$LIB_DIR"/*.dylib "$LIB_DIR"/*.so; do
     [ -f "$file" ] || continue
     chmod u+w "$file" || true
 
@@ -197,6 +235,18 @@ rewrite_install_names() {
 
     while IFS= read -r dep; do
       [ -n "$dep" ] || continue
+
+      # Normalize Vulkan dependency to SONAME form, so runtime can dlopen
+      # a stable name (libvulkan.1.dylib) instead of a full versioned file.
+      if [[ "$dep" =~ (^|/)libvulkan\.1\.[0-9].*\.dylib$ ]] && [ -e "$LIB_DIR/libvulkan.1.dylib" ]; then
+        install_name_tool -change "$dep" "@rpath/libvulkan.1.dylib" "$file" || true
+        continue
+      fi
+      if [[ "$dep" =~ (^|/)libplacebo\.[0-9].*\.dylib$ ]] && [ -e "$LIB_DIR/libplacebo.dylib" ]; then
+        install_name_tool -change "$dep" "@rpath/libplacebo.dylib" "$file" || true
+        continue
+      fi
+
       dep_name="$(basename "$dep")"
       if [ -e "$LIB_DIR/$dep_name" ]; then
         install_name_tool -change "$dep" "@rpath/$dep_name" "$file" || true
@@ -212,7 +262,8 @@ rewrite_install_names() {
 verify_no_absolute_non_system_refs() {
   local file dep dep_name
 
-  for file in "$LIB_DIR"/*; do
+  shopt -s nullglob
+  for file in "$LIB_DIR"/*.dylib "$LIB_DIR"/*.so; do
     [ -f "$file" ] || continue
     while IFS= read -r dep; do
       [ -n "$dep" ] || continue
@@ -252,10 +303,143 @@ copy_root_mpv_libs() {
   fi
 }
 
+copy_soia_utils_lib() {
+  local triple src
+  case "$TARGET_ARCH" in
+    arm64)
+      triple="aarch64-apple-darwin"
+      ;;
+    x86_64)
+      triple="x86_64-apple-darwin"
+      ;;
+  esac
+
+  src="${SOIA_UTILS_DIR}/${triple}/libsoia_utils.dylib"
+  if [ ! -f "$src" ]; then
+    echo "soia_utils dylib not found for ${triple}: $src" >&2
+    exit 1
+  fi
+  if ! is_target_arch_dylib "$src"; then
+    echo "soia_utils dylib arch mismatch for target ${TARGET_ARCH}: $src" >&2
+    exit 1
+  fi
+
+  cp -vP "$src" "$LIB_DIR/"
+}
+
+copy_moltenvk_runtime() {
+  local moltenvk_lib_src moltenvk_icd_src moltenvk_icd_target owner candidate lib_parent
+  local -a lib_candidates icd_candidates
+
+  moltenvk_lib_src=""
+  for owner in "$LIB_DIR"/libmpv*.dylib "$LIB_DIR"/libsoia_utils*.dylib; do
+    [ -e "$owner" ] || continue
+    if moltenvk_lib_src="$(resolve_dep "$owner" "libMoltenVK.dylib" 2>/dev/null || true)"; then
+      [ -n "$moltenvk_lib_src" ] && break
+    fi
+  done
+
+  lib_candidates=(
+    "$BUILD_DIR/libMoltenVK.dylib"
+    "$BUILD_DIR/lib/libMoltenVK.dylib"
+    "${BREW_PREFIX}/opt/molten-vk/lib/libMoltenVK.dylib"
+    "/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib"
+    "/usr/local/opt/molten-vk/lib/libMoltenVK.dylib"
+  )
+  if [ -z "$moltenvk_lib_src" ]; then
+    for candidate in "${lib_candidates[@]}"; do
+      [ -n "$candidate" ] || continue
+      if [ -f "$candidate" ] || [ -L "$candidate" ]; then
+        if ! is_target_arch_dylib "$candidate"; then
+          continue
+        fi
+        moltenvk_lib_src="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$moltenvk_lib_src" ] && [ -n "$BREW_PREFIX" ] && [ -d "${BREW_PREFIX}/Cellar/molten-vk" ]; then
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      if is_target_arch_dylib "$candidate"; then
+        moltenvk_lib_src="$candidate"
+        break
+      fi
+    done < <(find "${BREW_PREFIX}/Cellar/molten-vk" -type f -name 'libMoltenVK.dylib' -print 2>/dev/null || true)
+  fi
+
+  if [ -n "$moltenvk_lib_src" ]; then
+    cp -vL "$moltenvk_lib_src" "$LIB_DIR/"
+  else
+    echo "Warning: libMoltenVK.dylib not found for target arch ${TARGET_ARCH} in known runtime paths" >&2
+  fi
+
+  moltenvk_icd_src=""
+  if [ -n "$moltenvk_lib_src" ]; then
+    lib_parent="$(cd "$(dirname "$moltenvk_lib_src")/.." && pwd)"
+    icd_candidates=(
+      "$lib_parent/etc/vulkan/icd.d/MoltenVK_icd.json"
+      "$lib_parent/share/vulkan/icd.d/MoltenVK_icd.json"
+    )
+    for candidate in "${icd_candidates[@]}"; do
+      if [ -f "$candidate" ]; then
+        moltenvk_icd_src="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$moltenvk_icd_src" ]; then
+    icd_candidates=(
+      "$BUILD_DIR/MoltenVK_icd.json"
+      "$BUILD_DIR/etc/vulkan/icd.d/MoltenVK_icd.json"
+      "${BREW_PREFIX}/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json"
+      "${BREW_PREFIX}/opt/molten-vk/share/vulkan/icd.d/MoltenVK_icd.json"
+      "/opt/homebrew/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json"
+      "/usr/local/opt/molten-vk/etc/vulkan/icd.d/MoltenVK_icd.json"
+    )
+    for candidate in "${icd_candidates[@]}"; do
+      [ -n "$candidate" ] || continue
+      if [ -f "$candidate" ]; then
+        moltenvk_icd_src="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$moltenvk_icd_src" ] && [ -n "$BREW_PREFIX" ] && [ -d "${BREW_PREFIX}/Cellar/molten-vk" ]; then
+    moltenvk_icd_src="$(find "${BREW_PREFIX}/Cellar/molten-vk" -type f -name 'MoltenVK_icd.json' -print -quit 2>/dev/null || true)"
+  fi
+
+  if [ -n "$moltenvk_icd_src" ]; then
+    moltenvk_icd_target="${LIB_DIR}/MoltenVK_icd.json"
+    cp -vL "$moltenvk_icd_src" "$moltenvk_icd_target"
+    # Keep ICD portable in runtime packages by removing machine-local library paths.
+    sed -i.bak -E 's#"library_path"[[:space:]]*:[[:space:]]*"[^"]*"#"library_path": "libMoltenVK.dylib"#' "$moltenvk_icd_target" || true
+    rm -f "${moltenvk_icd_target}.bak"
+  else
+    echo "Warning: MoltenVK_icd.json not found in known runtime paths" >&2
+  fi
+}
+
+copy_config_data() {
+  if [ ! -f "$CONFIG_DATA_SRC" ]; then
+    echo "Required config file not found: $CONFIG_DATA_SRC" >&2
+    exit 1
+  fi
+
+  mkdir -p "$LIB_DIR"
+  cp -vP "$CONFIG_DATA_SRC" "${LIB_DIR}/config.data"
+}
+
 echo "Preparing runtime bundle from: $BUILD_DIR"
 copy_root_mpv_libs
+copy_soia_utils_lib
+copy_moltenvk_runtime
+copy_config_data
 
-for file in "$LIB_DIR"/libmpv*.dylib; do
+for file in "$LIB_DIR"/libmpv*.dylib "$LIB_DIR"/libsoia_utils*.dylib; do
   [ -e "$file" ] || continue
   scan_and_copy_deps "$file"
 done

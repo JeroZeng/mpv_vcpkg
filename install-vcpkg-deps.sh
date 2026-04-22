@@ -8,6 +8,7 @@ VCPKG_INSTALLED_DIR="${VCPKG_INSTALLED_DIR:-$PROJECT_ROOT/vcpkg_installed}"
 VCPKG_TARGET_TRIPLET="${VCPKG_TARGET_TRIPLET:-}"
 OVERLAY_TRIPLETS_DIR="$PROJECT_ROOT/vcpkg-triplets"
 OVERLAY_PORTS_DIR="$PROJECT_ROOT/vcpkg-ports"
+STATIC_PORTS_RAW="${STATIC_PORTS:-}"
 
 if [ -z "$VCPKG_TARGET_TRIPLET" ]; then
     case "$(uname -m)" in
@@ -98,6 +99,8 @@ PORTS=(
     libsmb2
     rubberband
     libjpeg-turbo
+    libiconv
+    shaderc
     libplacebo
 )
 
@@ -118,9 +121,53 @@ for port in "${PORTS[@]}"; do
     VCPKG_SPECS+=("${port}:${VCPKG_TARGET_TRIPLET}")
 done
 
+STATIC_TRIPLET="${VCPKG_TARGET_TRIPLET}-static"
+
+if [ -n "$STATIC_PORTS_RAW" ]; then
+    # Accept both comma-separated and whitespace-separated formats.
+    STATIC_PORTS_NORMALIZED="${STATIC_PORTS_RAW//,/ }"
+    STATIC_PORTS_LIST=""
+    for static_port in $STATIC_PORTS_NORMALIZED; do
+        [ -z "$static_port" ] && continue
+        STATIC_PORTS_LIST="${STATIC_PORTS_LIST} ${static_port} "
+    done
+
+    if [ ! -f "$OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" ]; then
+        echo "Missing static triplet file: $OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" >&2
+        echo "Create the static triplet first or adjust VCPKG_TARGET_TRIPLET." >&2
+        exit 1
+    fi
+
+    VCPKG_SPECS=()
+    for port in "${PORTS[@]}"; do
+        if [[ "$STATIC_PORTS_LIST" == *" ${port} "* ]]; then
+            VCPKG_SPECS+=("${port}:${STATIC_TRIPLET}")
+        else
+            VCPKG_SPECS+=("${port}:${VCPKG_TARGET_TRIPLET}")
+        fi
+    done
+
+    for static_port in $STATIC_PORTS_NORMALIZED; do
+        [ -z "$static_port" ] && continue
+        found=0
+        for port in "${PORTS[@]}"; do
+            if [ "$port" = "$static_port" ]; then
+                found=1
+                break
+            fi
+        done
+        if [ "$found" -eq 0 ]; then
+            echo "Warning: STATIC_PORTS includes '$static_port', but it is not in PORTS and will be ignored." >&2
+        fi
+    done
+fi
+
 echo "Installing vcpkg dependencies for triplet: $VCPKG_TARGET_TRIPLET"
+if [ -n "$STATIC_PORTS_RAW" ]; then
+    echo "Ports requested as static via STATIC_PORTS: $STATIC_PORTS_RAW"
+    echo "Static triplet in use: $STATIC_TRIPLET"
+fi
 "$VCPKG_ROOT/vcpkg" install \
-    --clean-after-build \
     --overlay-ports="$OVERLAY_PORTS_DIR" \
     --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
     --x-install-root="$VCPKG_INSTALLED_DIR" \

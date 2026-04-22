@@ -43,11 +43,26 @@ if [ -z "${VCPKG_TARGET_TRIPLET:-}" ]; then
             ;;
     esac
 fi
-VCPKG_PREFIX="$VCPKG_INSTALLED_DIR/$VCPKG_TARGET_TRIPLET"
-if [ ! -d "$VCPKG_PREFIX" ]; then
-    echo "Missing vcpkg install root for triplet: $VCPKG_TARGET_TRIPLET" >&2
-    echo "Expected path: $VCPKG_PREFIX" >&2
+
+if [[ "$VCPKG_TARGET_TRIPLET" == *-static ]]; then
+    VCPKG_STATIC_TRIPLET="$VCPKG_TARGET_TRIPLET"
+    VCPKG_DYNAMIC_TRIPLET="${VCPKG_TARGET_TRIPLET%-static}"
+else
+    VCPKG_DYNAMIC_TRIPLET="$VCPKG_TARGET_TRIPLET"
+    VCPKG_STATIC_TRIPLET="${VCPKG_TARGET_TRIPLET}-static"
+fi
+
+VCPKG_DYNAMIC_PREFIX="$VCPKG_INSTALLED_DIR/$VCPKG_DYNAMIC_TRIPLET"
+VCPKG_STATIC_PREFIX="$VCPKG_INSTALLED_DIR/$VCPKG_STATIC_TRIPLET"
+if [ ! -d "$VCPKG_DYNAMIC_PREFIX" ] && [ ! -d "$VCPKG_STATIC_PREFIX" ]; then
+    echo "Missing vcpkg install roots for both dynamic/static triplets" >&2
+    echo "Expected one of: $VCPKG_DYNAMIC_PREFIX or $VCPKG_STATIC_PREFIX" >&2
     exit 1
+fi
+VCPKG_PREFIX="$VCPKG_DYNAMIC_PREFIX"
+if [ ! -d "$VCPKG_PREFIX" ] && [ -d "$VCPKG_STATIC_PREFIX" ]; then
+    # Keep legacy VCPKG_PREFIX variable available for downstream logic.
+    VCPKG_PREFIX="$VCPKG_STATIC_PREFIX"
 fi
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
@@ -55,7 +70,14 @@ MIN_OS_FLAG="-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
 ARCH_FLAG="-arch ${MPV_TARGET_ARCH}"
 SWIFT_TARGET_TRIPLE="${MPV_TARGET_ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}"
 SWIFT_FLAGS="-target ${SWIFT_TARGET_TRIPLE}"
-PKG_CONFIG_DIRS="$VCPKG_PREFIX/lib/pkgconfig:$VCPKG_PREFIX/share/pkgconfig"
+PKG_CONFIG_DIRS=""
+if [ -d "$VCPKG_DYNAMIC_PREFIX" ]; then
+    PKG_CONFIG_DIRS="$VCPKG_DYNAMIC_PREFIX/lib/pkgconfig:$VCPKG_DYNAMIC_PREFIX/share/pkgconfig:$PKG_CONFIG_DIRS"
+fi
+if [ -d "$VCPKG_STATIC_PREFIX" ]; then
+    # Put static triplet first so pkg-config prefers static-enabled metadata when both exist.
+    PKG_CONFIG_DIRS="$VCPKG_STATIC_PREFIX/lib/pkgconfig:$VCPKG_STATIC_PREFIX/share/pkgconfig:$PKG_CONFIG_DIRS"
+fi
 export PKG_CONFIG_PATH="$PKG_CONFIG_DIRS${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_DIRS"
 if ! command -v pkg-config >/dev/null 2>&1; then
@@ -66,20 +88,113 @@ export CFLAGS="$ARCH_FLAG $MIN_OS_FLAG ${CFLAGS:-}"
 export CXXFLAGS="$ARCH_FLAG $MIN_OS_FLAG ${CXXFLAGS:-}"
 export OBJCFLAGS="$ARCH_FLAG $MIN_OS_FLAG ${OBJCFLAGS:-}"
 export OBJCXXFLAGS="$ARCH_FLAG $MIN_OS_FLAG ${OBJCXXFLAGS:-}"
-export LDFLAGS="-L$VCPKG_PREFIX/lib $ARCH_FLAG $MIN_OS_FLAG ${LDFLAGS:-}"
-export CPPFLAGS="-I$VCPKG_PREFIX/include ${CPPFLAGS:-}"
+VCPKG_LIB_DIRS=""
+VCPKG_INCLUDE_DIRS=""
+if [ -d "$VCPKG_DYNAMIC_PREFIX" ]; then
+    VCPKG_LIB_DIRS="$VCPKG_LIB_DIRS -L$VCPKG_DYNAMIC_PREFIX/lib"
+    VCPKG_INCLUDE_DIRS="$VCPKG_INCLUDE_DIRS -I$VCPKG_DYNAMIC_PREFIX/include"
+fi
+if [ -d "$VCPKG_STATIC_PREFIX" ]; then
+    # Put static libs first so the linker can resolve them before dylib fallbacks.
+    VCPKG_LIB_DIRS="-L$VCPKG_STATIC_PREFIX/lib $VCPKG_LIB_DIRS"
+    VCPKG_INCLUDE_DIRS="-I$VCPKG_STATIC_PREFIX/include $VCPKG_INCLUDE_DIRS"
+fi
+export LDFLAGS="$VCPKG_LIB_DIRS $ARCH_FLAG $MIN_OS_FLAG ${LDFLAGS:-}"
+export CPPFLAGS="$VCPKG_INCLUDE_DIRS ${CPPFLAGS:-}"
 export XDG_CACHE_HOME="$PROJECT_ROOT/.cache"
 export CLANG_MODULE_CACHE_PATH="$XDG_CACHE_HOME/clang-module-cache"
 export SWIFT_MODULECACHE_PATH="$XDG_CACHE_HOME/swift-module-cache"
 mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFT_MODULECACHE_PATH"
 
+normalize_vulkan_install_name() {
+    local vulkan_real_lib=""
+    local vulkan_alias_lib="$VCPKG_PREFIX/lib/libvulkan.1.dylib"
+    local vulkan_soname="@rpath/libvulkan.1.dylib"
+
+    if [ -L "$vulkan_alias_lib" ]; then
+        local resolved_alias
+        resolved_alias="$(readlink "$vulkan_alias_lib" || true)"
+        if [ -n "$resolved_alias" ]; then
+            if [[ "$resolved_alias" = /* ]]; then
+                vulkan_real_lib="$resolved_alias"
+            else
+                vulkan_real_lib="$VCPKG_PREFIX/lib/$resolved_alias"
+            fi
+        fi
+    fi
+
+    if [ -z "$vulkan_real_lib" ] || [ ! -f "$vulkan_real_lib" ]; then
+        local candidates=("$VCPKG_PREFIX"/lib/libvulkan.1.*.dylib)
+        if [ -e "${candidates[0]}" ]; then
+            vulkan_real_lib="${candidates[0]}"
+        fi
+    fi
+
+    if [ -z "$vulkan_real_lib" ] || [ ! -f "$vulkan_real_lib" ]; then
+        return
+    fi
+
+    local current_id
+    current_id="$(otool -D "$vulkan_real_lib" 2>/dev/null | sed -n '2p' | tr -d '[:space:]')"
+    if [ "$current_id" = "$vulkan_soname" ]; then
+        echo "Vulkan install_name already normalized: $current_id"
+        return
+    fi
+
+    echo "Normalizing Vulkan install_name: $current_id -> $vulkan_soname"
+    install_name_tool -id "$vulkan_soname" "$vulkan_real_lib"
+}
+
+normalize_libplacebo_install_name() {
+    local placebo_real_lib=""
+    local placebo_alias_lib="$VCPKG_PREFIX/lib/libplacebo.dylib"
+    local placebo_soname="@rpath/libplacebo.dylib"
+
+    if [ -L "$placebo_alias_lib" ]; then
+        local resolved_alias
+        resolved_alias="$(readlink "$placebo_alias_lib" || true)"
+        if [ -n "$resolved_alias" ]; then
+            if [[ "$resolved_alias" = /* ]]; then
+                placebo_real_lib="$resolved_alias"
+            else
+                placebo_real_lib="$VCPKG_PREFIX/lib/$resolved_alias"
+            fi
+        fi
+    fi
+
+    if [ -z "$placebo_real_lib" ] || [ ! -f "$placebo_real_lib" ]; then
+        local candidates=("$VCPKG_PREFIX"/lib/libplacebo.*.dylib)
+        if [ -e "${candidates[0]}" ]; then
+            placebo_real_lib="${candidates[0]}"
+        fi
+    fi
+
+    if [ -z "$placebo_real_lib" ] || [ ! -f "$placebo_real_lib" ]; then
+        return
+    fi
+
+    local current_id
+    current_id="$(otool -D "$placebo_real_lib" 2>/dev/null | sed -n '2p' | tr -d '[:space:]')"
+    if [ "$current_id" = "$placebo_soname" ]; then
+        echo "libplacebo install_name already normalized: $current_id"
+        return
+    fi
+
+    echo "Normalizing libplacebo install_name: $current_id -> $placebo_soname"
+    install_name_tool -id "$placebo_soname" "$placebo_real_lib"
+}
+
 cd "$MPV_DIR"
 echo "Building for arch=$MPV_TARGET_ARCH on host=$HOST_ARCH"
 echo "Using vcpkg triplet=$VCPKG_TARGET_TRIPLET"
+echo "Using vcpkg dynamic triplet=$VCPKG_DYNAMIC_TRIPLET (exists: $([ -d "$VCPKG_DYNAMIC_PREFIX" ] && echo yes || echo no))"
+echo "Using vcpkg static triplet=$VCPKG_STATIC_TRIPLET (exists: $([ -d "$VCPKG_STATIC_PREFIX" ] && echo yes || echo no))"
 echo "Using vcpkg root=$VCPKG_ROOT"
 echo "Using PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
 echo "Building with MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 echo "Building with Swift target=$SWIFT_TARGET_TRIPLE"
+normalize_vulkan_install_name
+# normalize_libplacebo_install_name
 
 MESON_ARGS=(
     --buildtype=release

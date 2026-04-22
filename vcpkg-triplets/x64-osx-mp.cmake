@@ -5,3 +5,5 @@ set(VCPKG_BUILD_TYPE release)
 set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
 set(VCPKG_OSX_ARCHITECTURES x86_64)
 set(VCPKG_OSX_DEPLOYMENT_TARGET "14.0")
+# Force GNU libiconv instead of macOS system iconv.
+set(X_VCPKG_BUILD_GNU_LIBICONV 1)

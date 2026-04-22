@@ -38,6 +38,8 @@ git clone --depth 1 https://github.com/microsoft/vcpkg.git ./vcpkg
 Custom overlay triplets are in `vcpkg-triplets/`:
 - `arm64-osx-mp` (deployment target `14.0`)
 - `x64-osx-mp` (deployment target `14.0`)
+- `arm64-osx-mp-static` (same as `arm64-osx-mp`, but static library linkage)
+- `x64-osx-mp-static` (same as `x64-osx-mp`, but static library linkage)
 
 Important:
 - Keep `MACOSX_DEPLOYMENT_TARGET` in `build-macos.sh` aligned with the triplet deployment target for the same arch.
@@ -66,6 +68,66 @@ The script uses:
 - install root: `./vcpkg_installed`
 
 Default dependency set now includes `libsmb2` (SMB2/SMB3 client support).
+
+Build selected ports as static libraries (others stay dynamic):
+
+```bash
+STATIC_PORTS=luajit bash ./install-vcpkg-deps.sh
+STATIC_PORTS="luajit,mujs,libplacebo" bash ./install-vcpkg-deps.sh
+```
+
+Notes:
+- `STATIC_PORTS` accepts comma-separated or whitespace-separated names.
+- Static ports are installed with `${VCPKG_TARGET_TRIPLET}-static`.
+- If a listed port is not in the script's `PORTS` list, it is ignored with a warning.
+
+## Verify Static Library Output
+
+Example: verify `luajit` was installed as static library.
+
+```bash
+# 1) Confirm static archive exists for the static triplet
+ls -lh ./vcpkg_installed/$(uname -m | sed 's/arm64/arm64-osx-mp-static/;s/x86_64/x64-osx-mp-static/')/lib/libluajit*.a
+
+# 2) Confirm no dylib is present for that triplet (expected for static linkage)
+find ./vcpkg_installed/$(uname -m | sed 's/arm64/arm64-osx-mp-static/;s/x86_64/x64-osx-mp-static/') -name 'libluajit*.dylib'
+```
+
+If step 1 prints a `libluajit*.a` path and step 2 prints nothing, `luajit` is installed as static.
+
+You can also check install metadata:
+
+```bash
+rg -n "luajit:.*-static" ./vcpkg_installed/vcpkg/status
+```
+
+## Switch A Port From Dynamic To Static
+
+When dynamic and static triplets both exist, they are installed side-by-side.  
+You can either keep both, or remove the dynamic one before reinstalling static.
+
+Remove dynamic package(s) for a specific triplet:
+
+```bash
+# Example: remove luajit dynamic package for arm64 triplet
+./vcpkg/vcpkg remove luajit:arm64-osx-mp --overlay-triplets=./vcpkg-triplets --x-install-root=./vcpkg_installed
+
+# Example: remove multiple dynamic packages
+./vcpkg/vcpkg remove luajit:arm64-osx-mp mujs:arm64-osx-mp --overlay-triplets=./vcpkg-triplets --x-install-root=./vcpkg_installed
+```
+
+Then install static version(s):
+
+```bash
+VCPKG_TARGET_TRIPLET=arm64-osx-mp STATIC_PORTS="luajit,mujs" bash ./install-vcpkg-deps.sh
+```
+
+If you want a full clean reinstall for one triplet:
+
+```bash
+rm -rf ./vcpkg_installed/arm64-osx-mp
+VCPKG_TARGET_TRIPLET=arm64-osx-mp STATIC_PORTS="luajit,mujs" bash ./install-vcpkg-deps.sh
+```
 
 ## Build mpv/libmpv
 
@@ -136,6 +198,7 @@ Outputs:
 - `VCPKG_TARGET_TRIPLET`: e.g. `arm64-osx-mp`, `x64-osx-mp`
 - `VCPKG_ROOT`: vcpkg checkout path (default `./vcpkg`)
 - `VCPKG_INSTALLED_DIR`: install root (default `./vcpkg_installed`)
+- `STATIC_PORTS`: ports to install with static linkage, e.g. `luajit,mujs`
 - `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers
 
 ## CI Notes

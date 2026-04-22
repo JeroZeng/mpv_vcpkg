@@ -66,7 +66,7 @@ vcpkg_configure_meson(
         -Dopengl=disabled
         -Dvulkan=enabled
         -Dvk-proc-addr=enabled
-        -Dshaderc=disabled
+        -Dshaderc=enabled
         -Ddemos=false
         -Dtests=false
         -Dbench=false
