@@ -12,7 +12,9 @@ MOLTENVK_REPO_URL="${MOLTENVK_REPO_URL:-https://github.com/KhronosGroup/MoltenVK
 MOLTENVK_REF="${MOLTENVK_REF:-v1.4.0}"
 MOLTENVK_CONFIGURATION="${MOLTENVK_CONFIGURATION:-Release}"
 MOLTENVK_OUTPUT_DIR="${MOLTENVK_OUTPUT_DIR:-$PROJECT_ROOT/vendor/MoltenVK/Build/Release}"
+MOLTENVK_LIB_PATH="${MOLTENVK_LIB_PATH:-$MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib}"
 MOLTENVK_ICD_PATH="${MOLTENVK_ICD_PATH:-$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json}"
+MOLTENVK_DERIVED_DATA_DIR="${MOLTENVK_DERIVED_DATA_DIR:-$MOLTENVK_REPO_DIR/Build/DerivedData}"
 
 if [ ! -d "$MPV_DIR" ]; then
     echo "Missing mpv source: $MPV_DIR"
@@ -193,6 +195,8 @@ normalize_libplacebo_install_name() {
 
 ensure_moltenvk_runtime() {
     local pkg_project
+    local moltenvk_lib_found=""
+    local moltenvk_icd_found=""
 
     if [ "$AUTO_BUILD_MOLTENVK" = "0" ]; then
         echo "Skipping MoltenVK auto-build (AUTO_BUILD_MOLTENVK=0)"
@@ -208,7 +212,7 @@ ensure_moltenvk_runtime() {
         exit 1
     fi
 
-    if [ ! -f "$MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" ] || [ ! -f "$MOLTENVK_ICD_PATH" ]; then
+    if [ ! -f "$MOLTENVK_LIB_PATH" ] || [ ! -f "$MOLTENVK_ICD_PATH" ]; then
         echo "MoltenVK runtime artifacts missing; building them now..."
     else
         echo "Refreshing MoltenVK runtime artifacts..."
@@ -242,16 +246,36 @@ ensure_moltenvk_runtime() {
         -scheme "MoltenVK Package (macOS only)" \
         -configuration "$MOLTENVK_CONFIGURATION" \
         -arch "$MPV_TARGET_ARCH" \
+        -derivedDataPath "$MOLTENVK_DERIVED_DATA_DIR" \
         build
 
-    if [ ! -f "$MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" ]; then
-        echo "Failed to find MoltenVK output: $MOLTENVK_OUTPUT_DIR/libMoltenVK.dylib" >&2
+    if [ -f "$MOLTENVK_LIB_PATH" ]; then
+        moltenvk_lib_found="$MOLTENVK_LIB_PATH"
+    elif [ -f "$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib" ]; then
+        moltenvk_lib_found="$PROJECT_ROOT/vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib"
+    elif [ -f "$MOLTENVK_OUTPUT_DIR/lib/libMoltenVK.dylib" ]; then
+        moltenvk_lib_found="$MOLTENVK_OUTPUT_DIR/lib/libMoltenVK.dylib"
+    elif [ -f "$MOLTENVK_DERIVED_DATA_DIR/Build/Products/Release/libMoltenVK.dylib" ]; then
+        moltenvk_lib_found="$MOLTENVK_DERIVED_DATA_DIR/Build/Products/Release/libMoltenVK.dylib"
+    fi
+
+    if [ -z "$moltenvk_lib_found" ]; then
+        echo "Failed to find MoltenVK output: libMoltenVK.dylib (checked Build/Release and Package/Release paths)" >&2
         exit 1
     fi
-    if [ ! -f "$MOLTENVK_ICD_PATH" ]; then
-        echo "Failed to find MoltenVK output: $MOLTENVK_ICD_PATH" >&2
+    echo "Using MoltenVK library: $moltenvk_lib_found"
+
+    if [ -f "$MOLTENVK_ICD_PATH" ]; then
+        moltenvk_icd_found="$MOLTENVK_ICD_PATH"
+    elif [ -f "$PROJECT_ROOT/vendor/MoltenVK/MoltenVK/icd/MoltenVK_icd.json" ]; then
+        moltenvk_icd_found="$PROJECT_ROOT/vendor/MoltenVK/MoltenVK/icd/MoltenVK_icd.json"
+    fi
+
+    if [ -z "$moltenvk_icd_found" ]; then
+        echo "Failed to find MoltenVK output: MoltenVK_icd.json" >&2
         exit 1
     fi
+    echo "Using MoltenVK ICD json: $moltenvk_icd_found"
 }
 
 cd "$MPV_DIR"
