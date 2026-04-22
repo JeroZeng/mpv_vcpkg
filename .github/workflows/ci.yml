@@ -49,11 +49,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Install build tools
         run: |
           set -euo pipefail
+          python3 --version
           python3 -m pip install --upgrade pip
           python3 -m pip install meson ninja
           FORMULAE=(pkgconf autoconf autoconf-archive automake libtool nasm)
