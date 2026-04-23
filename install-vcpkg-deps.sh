@@ -8,7 +8,6 @@ VCPKG_INSTALLED_DIR="${VCPKG_INSTALLED_DIR:-$PROJECT_ROOT/vcpkg_installed}"
 VCPKG_TARGET_TRIPLET="${VCPKG_TARGET_TRIPLET:-}"
 OVERLAY_TRIPLETS_DIR="$PROJECT_ROOT/vcpkg-triplets"
 OVERLAY_PORTS_DIR="$PROJECT_ROOT/vcpkg-ports"
-STATIC_PORTS_RAW="${STATIC_PORTS:-}"
 
 if [ -z "$VCPKG_TARGET_TRIPLET" ]; then
     case "$(uname -m)" in
@@ -83,17 +82,22 @@ EOF
     fi
 fi
 
-PORTS=(
+STATIC_PORTS=(
+    luajit
+    mujs
+)
+
+DYNAMIC_PORTS=(
+    libarchive
     freetype
     fribidi
+    harfbuzz
+    dav1d
     lcms
     libass
     ffmpeg
-    luajit
-    mujs
     uchardet
     vulkan
-    libarchive
     libbluray
     libdvdnav
     libsmb2
@@ -102,6 +106,23 @@ PORTS=(
     libiconv
     shaderc
     libplacebo
+)
+
+# Explicit ffmpeg feature set to avoid "minimal" defaults.
+# Keep this aligned with DYNAMIC_PORTS dependencies and project needs.
+FFMPEG_FEATURES=(
+    ass
+    bzip2
+    dav1d
+    drawtext
+    freetype
+    fribidi
+    iconv
+    lzma
+    openssl
+    rubberband
+    vulkan
+    zlib
 )
 
 UNAVAILABLE_OPTIONAL_PORTS=(
@@ -116,59 +137,58 @@ for port in "${UNAVAILABLE_OPTIONAL_PORTS[@]}"; do
     fi
 done
 
-VCPKG_SPECS=()
-for port in "${PORTS[@]}"; do
-    VCPKG_SPECS+=("${port}:${VCPKG_TARGET_TRIPLET}")
+STATIC_TRIPLET="${VCPKG_TARGET_TRIPLET}-static"
+STATIC_SPECS=()
+DYNAMIC_SPECS=()
+
+if [ "${#STATIC_PORTS[@]}" -gt 0 ] && [ ! -f "$OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" ]; then
+    echo "Missing static triplet file: $OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" >&2
+    echo "Create the static triplet first or adjust VCPKG_TARGET_TRIPLET." >&2
+    exit 1
+fi
+
+for port in "${STATIC_PORTS[@]}"; do
+    STATIC_SPECS+=("${port}:${STATIC_TRIPLET}")
+done
+for port in "${DYNAMIC_PORTS[@]}"; do
+    if [ "$port" = "ffmpeg" ]; then
+        if [ "${#FFMPEG_FEATURES[@]}" -gt 0 ]; then
+            ffmpeg_features_csv="$(IFS=,; echo "${FFMPEG_FEATURES[*]}")"
+            DYNAMIC_SPECS+=("ffmpeg[${ffmpeg_features_csv}]:${VCPKG_TARGET_TRIPLET}")
+        else
+            DYNAMIC_SPECS+=("ffmpeg:${VCPKG_TARGET_TRIPLET}")
+        fi
+    else
+        DYNAMIC_SPECS+=("${port}:${VCPKG_TARGET_TRIPLET}")
+    fi
 done
 
-STATIC_TRIPLET="${VCPKG_TARGET_TRIPLET}-static"
+if [ "${#STATIC_SPECS[@]}" -gt 0 ]; then
+    echo "Step 1/2: installing static ports with triplet: $STATIC_TRIPLET"
+    echo "Static ports: ${STATIC_PORTS[*]}"
+    "$VCPKG_ROOT/vcpkg" install \
+        --overlay-ports="$OVERLAY_PORTS_DIR" \
+        --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
+        --x-install-root="$VCPKG_INSTALLED_DIR" \
+        "${STATIC_SPECS[@]}"
+fi
 
-if [ -n "$STATIC_PORTS_RAW" ]; then
-    # Accept both comma-separated and whitespace-separated formats.
-    STATIC_PORTS_NORMALIZED="${STATIC_PORTS_RAW//,/ }"
-    STATIC_PORTS_LIST=""
-    for static_port in $STATIC_PORTS_NORMALIZED; do
-        [ -z "$static_port" ] && continue
-        STATIC_PORTS_LIST="${STATIC_PORTS_LIST} ${static_port} "
-    done
-
-    if [ ! -f "$OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" ]; then
-        echo "Missing static triplet file: $OVERLAY_TRIPLETS_DIR/${STATIC_TRIPLET}.cmake" >&2
-        echo "Create the static triplet first or adjust VCPKG_TARGET_TRIPLET." >&2
-        exit 1
+if [ "${#DYNAMIC_SPECS[@]}" -gt 0 ]; then
+    echo "Step 2/2: installing dynamic ports with triplet: $VCPKG_TARGET_TRIPLET"
+    if [ "${#STATIC_SPECS[@]}" -gt 0 ]; then
+        echo "Dynamic ports: ${DYNAMIC_PORTS[*]}"
     fi
-
-    VCPKG_SPECS=()
-    for port in "${PORTS[@]}"; do
-        if [[ "$STATIC_PORTS_LIST" == *" ${port} "* ]]; then
-            VCPKG_SPECS+=("${port}:${STATIC_TRIPLET}")
-        else
-            VCPKG_SPECS+=("${port}:${VCPKG_TARGET_TRIPLET}")
-        fi
-    done
-
-    for static_port in $STATIC_PORTS_NORMALIZED; do
-        [ -z "$static_port" ] && continue
-        found=0
-        for port in "${PORTS[@]}"; do
-            if [ "$port" = "$static_port" ]; then
-                found=1
-                break
-            fi
-        done
-        if [ "$found" -eq 0 ]; then
-            echo "Warning: STATIC_PORTS includes '$static_port', but it is not in PORTS and will be ignored." >&2
-        fi
-    done
+    if [ "${#FFMPEG_FEATURES[@]}" -gt 0 ]; then
+        echo "ffmpeg features: ${FFMPEG_FEATURES[*]}"
+    fi
+    "$VCPKG_ROOT/vcpkg" install \
+        --overlay-ports="$OVERLAY_PORTS_DIR" \
+        --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
+        --x-install-root="$VCPKG_INSTALLED_DIR" \
+        "${DYNAMIC_SPECS[@]}"
 fi
 
-echo "Installing vcpkg dependencies for triplet: $VCPKG_TARGET_TRIPLET"
-if [ -n "$STATIC_PORTS_RAW" ]; then
-    echo "Ports requested as static via STATIC_PORTS: $STATIC_PORTS_RAW"
-    echo "Static triplet in use: $STATIC_TRIPLET"
+if [ "${#STATIC_SPECS[@]}" -eq 0 ] && [ "${#DYNAMIC_SPECS[@]}" -eq 0 ]; then
+    echo "No ports to install." >&2
+    exit 1
 fi
-"$VCPKG_ROOT/vcpkg" install \
-    --overlay-ports="$OVERLAY_PORTS_DIR" \
-    --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
-    --x-install-root="$VCPKG_INSTALLED_DIR" \
-    "${VCPKG_SPECS[@]}"

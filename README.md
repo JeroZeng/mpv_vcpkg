@@ -69,17 +69,11 @@ The script uses:
 
 Default dependency set now includes `libsmb2` (SMB2/SMB3 client support).
 
-Build selected ports as static libraries (others stay dynamic):
+Dependencies are installed in two phases:
+- Step 1: ports listed in `STATIC_PORTS=(...)` inside `install-vcpkg-deps.sh` using `${VCPKG_TARGET_TRIPLET}-static`
+- Step 2: ports listed in `DYNAMIC_PORTS=(...)` using `${VCPKG_TARGET_TRIPLET}`
 
-```bash
-STATIC_PORTS=luajit bash ./install-vcpkg-deps.sh
-STATIC_PORTS="luajit,mujs,libplacebo" bash ./install-vcpkg-deps.sh
-```
-
-Notes:
-- `STATIC_PORTS` accepts comma-separated or whitespace-separated names.
-- Static ports are installed with `${VCPKG_TARGET_TRIPLET}-static`.
-- If a listed port is not in the script's `PORTS` list, it is ignored with a warning.
+To change static vs dynamic grouping, edit those two arrays directly in `install-vcpkg-deps.sh`.
 
 ## Verify Static Library Output
 
@@ -116,17 +110,17 @@ Remove dynamic package(s) for a specific triplet:
 ./vcpkg/vcpkg remove luajit:arm64-osx-mp mujs:arm64-osx-mp --overlay-triplets=./vcpkg-triplets --x-install-root=./vcpkg_installed
 ```
 
-Then install static version(s):
+Then reinstall with your current script-defined grouping:
 
 ```bash
-VCPKG_TARGET_TRIPLET=arm64-osx-mp STATIC_PORTS="luajit,mujs" bash ./install-vcpkg-deps.sh
+VCPKG_TARGET_TRIPLET=arm64-osx-mp bash ./install-vcpkg-deps.sh
 ```
 
 If you want a full clean reinstall for one triplet:
 
 ```bash
 rm -rf ./vcpkg_installed/arm64-osx-mp
-VCPKG_TARGET_TRIPLET=arm64-osx-mp STATIC_PORTS="luajit,mujs" bash ./install-vcpkg-deps.sh
+VCPKG_TARGET_TRIPLET=arm64-osx-mp bash ./install-vcpkg-deps.sh
 ```
 
 ## Build mpv/libmpv
@@ -155,6 +149,12 @@ Build a specific mpv version:
 MPV_VERSION=0.41.1 bash ./download.sh
 bash ./build-macos.sh
 ```
+
+ffmpeg is built via overlay port `vcpkg-ports/ffmpeg` with fixed configure flags:
+- `--disable-programs`
+- `--enable-small`
+- `--enable-openssl`
+- `--disable-mbedtls`
 
 Cross-build `x86_64` on Apple Silicon:
 
@@ -212,7 +212,6 @@ Outputs:
 - `VCPKG_TARGET_TRIPLET`: e.g. `arm64-osx-mp`, `x64-osx-mp`
 - `VCPKG_ROOT`: vcpkg checkout path (default `./vcpkg`)
 - `VCPKG_INSTALLED_DIR`: install root (default `./vcpkg_installed`)
-- `STATIC_PORTS`: ports to install with static linkage, e.g. `luajit,mujs`
 - `MOLTENVK_REF`: MoltenVK git ref for `build-macos.sh` (default `v1.4.0`)
 - `MOLTENVK_REPO_DIR`: MoltenVK source dir (default `./vendor/MoltenVK`)
 - `MOLTENVK_OUTPUT_DIR`: MoltenVK output dir (default `./vendor/MoltenVK/Build/Release`)
