@@ -37,7 +37,7 @@ git clone --depth 1 https://github.com/microsoft/vcpkg.git ./vcpkg
 
 Custom overlay triplets are in `vcpkg-triplets/`:
 - `arm64-osx-mp` (deployment target `14.0`)
-- `x64-osx-mp` (deployment target `14.0`)
+- `x64-osx-mp` (deployment target `13.0`)
 - `arm64-osx-mp-static` (same as `arm64-osx-mp`, but static library linkage)
 - `x64-osx-mp-static` (same as `x64-osx-mp`, but static library linkage)
 
@@ -162,7 +162,7 @@ Cross-build `x86_64` on Apple Silicon:
 VCPKG_TARGET_TRIPLET=x64-osx-mp bash ./install-vcpkg-deps.sh
 MPV_TARGET_ARCH=x86_64 \
 VCPKG_TARGET_TRIPLET=x64-osx-mp \
-MACOSX_DEPLOYMENT_TARGET=14.0 \
+MACOSX_DEPLOYMENT_TARGET=13.0 \
 bash ./build-macos.sh
 ```
 
@@ -218,7 +218,7 @@ Outputs:
 - `MOLTENVK_LIB_PATH`: MoltenVK dylib path (default `./vendor/MoltenVK/Build/Release/libMoltenVK.dylib`)
 - `MOLTENVK_ICD_PATH`: MoltenVK ICD json path (default `./vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json`)
 - `MOLTENVK_DERIVED_DATA_DIR`: Xcode DerivedData path for MoltenVK build (default `./vendor/MoltenVK/Build/DerivedData`)
-- `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers
+- `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers (default: `14.0` for `arm64`, `13.0` for `x86_64`)
 
 ## CI Notes
 

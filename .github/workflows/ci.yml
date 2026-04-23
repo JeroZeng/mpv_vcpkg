@@ -36,7 +36,7 @@ jobs:
             deployment_target: "14.0"
             vcpkg_triplet: arm64-osx-mp
           - arch: x86_64
-            deployment_target: "14.0"
+            deployment_target: "13.0"
             vcpkg_triplet: x64-osx-mp
     steps:
       - uses: actions/checkout@v6
