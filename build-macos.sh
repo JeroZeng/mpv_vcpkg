@@ -75,11 +75,7 @@ if [ ! -d "$VCPKG_PREFIX" ] && [ -d "$VCPKG_STATIC_PREFIX" ]; then
 fi
 
 if [ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
-    if [ "$MPV_TARGET_ARCH" = "x86_64" ]; then
-        export MACOSX_DEPLOYMENT_TARGET="13.0"
-    else
-        export MACOSX_DEPLOYMENT_TARGET="14.0"
-    fi
+    export MACOSX_DEPLOYMENT_TARGET="13.0"
 else
     export MACOSX_DEPLOYMENT_TARGET
 fi

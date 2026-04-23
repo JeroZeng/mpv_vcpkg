@@ -33,7 +33,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            deployment_target: "14.0"
+            deployment_target: "13.0"
             vcpkg_triplet: arm64-osx-mp
           - arch: x86_64
             deployment_target: "13.0"

@@ -36,7 +36,7 @@ git clone --depth 1 https://github.com/microsoft/vcpkg.git ./vcpkg
 ## Triplets And Deployment Targets
 
 Custom overlay triplets are in `vcpkg-triplets/`:
-- `arm64-osx-mp` (deployment target `14.0`)
+- `arm64-osx-mp` (deployment target `13.0`)
 - `x64-osx-mp` (deployment target `13.0`)
 - `arm64-osx-mp-static` (same as `arm64-osx-mp`, but static library linkage)
 - `x64-osx-mp-static` (same as `x64-osx-mp`, but static library linkage)
@@ -97,7 +97,7 @@ rg -n "luajit:.*-static" ./vcpkg_installed/vcpkg/status
 
 ## Switch A Port From Dynamic To Static
 
-When dynamic and static triplets both exist, they are installed side-by-side.  
+When dynamic and static triplets both exist, they are installed side-by-side.
 You can either keep both, or remove the dynamic one before reinstalling static.
 
 Remove dynamic package(s) for a specific triplet:
@@ -172,7 +172,7 @@ Native Apple Silicon build (matching `arm64-osx-mp` deployment target):
 VCPKG_TARGET_TRIPLET=arm64-osx-mp bash ./install-vcpkg-deps.sh
 MPV_TARGET_ARCH=arm64 \
 VCPKG_TARGET_TRIPLET=arm64-osx-mp \
-MACOSX_DEPLOYMENT_TARGET=14.0 \
+MACOSX_DEPLOYMENT_TARGET=13.0 \
 bash ./build-macos.sh
 ```
 
@@ -218,7 +218,7 @@ Outputs:
 - `MOLTENVK_LIB_PATH`: MoltenVK dylib path (default `./vendor/MoltenVK/Build/Release/libMoltenVK.dylib`)
 - `MOLTENVK_ICD_PATH`: MoltenVK ICD json path (default `./vendor/MoltenVK/Package/Release/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json`)
 - `MOLTENVK_DERIVED_DATA_DIR`: Xcode DerivedData path for MoltenVK build (default `./vendor/MoltenVK/Build/DerivedData`)
-- `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers (default: `14.0` for `arm64`, `13.0` for `x86_64`)
+- `MACOSX_DEPLOYMENT_TARGET`: macOS minimum target passed to compilers (default: `13.0` for `arm64`, `13.0` for `x86_64`)
 
 ## CI Notes
 
