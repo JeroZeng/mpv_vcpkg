@@ -169,6 +169,7 @@ if [ "${#STATIC_SPECS[@]}" -gt 0 ]; then
     echo "Step 1/2: installing static ports with triplet: $STATIC_TRIPLET"
     echo "Static ports: ${STATIC_PORTS[*]}"
     "$VCPKG_ROOT/vcpkg" install \
+        --recurse \
         --overlay-ports="$OVERLAY_PORTS_DIR" \
         --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
         --x-install-root="$VCPKG_INSTALLED_DIR" \
@@ -184,6 +185,7 @@ if [ "${#DYNAMIC_SPECS[@]}" -gt 0 ]; then
         echo "ffmpeg features: ${FFMPEG_FEATURES[*]}"
     fi
     "$VCPKG_ROOT/vcpkg" install \
+        --recurse \
         --overlay-ports="$OVERLAY_PORTS_DIR" \
         --overlay-triplets="$OVERLAY_TRIPLETS_DIR" \
         --x-install-root="$VCPKG_INSTALLED_DIR" \
