@@ -3,7 +3,7 @@ name: Build libmpv
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, vcpkg]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -145,10 +145,158 @@ jobs:
             libmpv-*.tar.gz
             libmpv-*.tar.gz.sha256
 
+  linux-build:
+    name: Build libmpv (${{ matrix.runner }} / ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install apt dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git curl python3 meson ninja-build pkg-config patchelf \
+            libfreetype-dev libfribidi-dev liblcms2-dev libluajit-5.1-dev \
+            libass-dev libavcodec-dev libavdevice-dev libavfilter-dev libavformat-dev libavutil-dev \
+            libswresample-dev libswscale-dev \
+            libpipewire-0.3-dev libpulse-dev \
+            libxss-dev libxpresent-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libarchive-dev libbluray-dev libcdio-paranoia-dev libdvdnav-dev \
+            librubberband-dev libzimg-dev libplacebo-dev libvulkan-dev
+
+      - name: Show build environment
+        run: |
+          set -euo pipefail
+          uname -a
+          gcc --version
+          meson --version
+          pkg-config --version
+
+      - name: Download mpv source code
+        run: bash ./download.sh
+
+      - name: Build mpv library
+        run: bash ./build-linux.sh
+
+      - name: Prepare artifacts
+        run: |
+          set -euo pipefail
+          REF_SAFE="${GITHUB_REF_NAME//\//-}"
+          MPV_TAG="$REF_SAFE"
+          RELEASE_REV="dev"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-r([0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r${BASH_REMATCH[2]}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r0"
+          fi
+          PKG_NAME="libmpv-${MPV_TAG}-${RELEASE_REV}-linux-${{ matrix.arch }}"
+          bash ./package-linux-runtime.sh \
+            --build-dir "$GITHUB_WORKSPACE/vendor/mpv/buildout" \
+            --out-dir "$GITHUB_WORKSPACE/release" \
+            --pkg-name "$PKG_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-linux-${{ github.run_id }}-${{ matrix.arch }}
+          path: |
+            libmpv-*.tar.gz
+            libmpv-*.tar.gz.sha256
+
+  mingw64-build:
+    name: Build libmpv (windows-2022 / mingw64)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup MSYS2 (MINGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-ffmpeg
+            mingw-w64-x86_64-libass
+            mingw-w64-x86_64-luajit
+            mingw-w64-x86_64-uchardet
+            mingw-w64-x86_64-libplacebo
+            mingw-w64-x86_64-libarchive
+            mingw-w64-x86_64-libbluray
+            mingw-w64-x86_64-libcdio-paranoia
+            mingw-w64-x86_64-libdvdnav
+            mingw-w64-x86_64-rubberband
+            mingw-w64-x86_64-zimg
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-vulkan-headers
+
+      - name: Show build environment
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          uname -a
+          gcc --version
+          meson --version
+          pkg-config --version
+
+      - name: Download mpv source code
+        shell: msys2 {0}
+        run: bash ./download.sh
+
+      - name: Build mpv library
+        shell: msys2 {0}
+        run: bash ./build-mingw64.sh
+
+      - name: Prepare artifacts
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          REF_SAFE="${GITHUB_REF_NAME//\//-}"
+          MPV_TAG="$REF_SAFE"
+          RELEASE_REV="dev"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-r([0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r${BASH_REMATCH[2]}"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            MPV_TAG="${BASH_REMATCH[1]}"
+            RELEASE_REV="r0"
+          fi
+          PKG_NAME="libmpv-${MPV_TAG}-${RELEASE_REV}-windows-mingw64-x86_64"
+          bash ./package-mingw64-runtime.sh \
+            --build-dir "$GITHUB_WORKSPACE/vendor/mpv/buildout" \
+            --out-dir "$GITHUB_WORKSPACE/release" \
+            --pkg-name "$PKG_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-mingw64-${{ github.run_id }}-x86_64
+          path: |
+            libmpv-*.tar.gz
+            libmpv-*.tar.gz.sha256
+
   publish-release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: macos-build
+    needs: [macos-build, linux-build, mingw64-build]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
